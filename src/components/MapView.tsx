@@ -1,7 +1,15 @@
-// @ts-nocheck
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { useEffect, useRef } from 'react';
+import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Badge } from '@/components/ui/badge';
+
+// Fix default marker icon issue
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
 interface Report {
   id: string;
@@ -18,46 +26,64 @@ interface MapViewProps {
 }
 
 const MapView = ({ reports, center, zoom = 13 }: MapViewProps) => {
+  const mapRef = useRef<L.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'resolved':
-        return 'bg-success/10 text-success border-success/20';
+        return '#10b981';
       case 'progress':
-        return 'bg-warning/10 text-warning border-warning/20';
+        return '#f59e0b';
       default:
-        return 'bg-accent/10 text-accent border-accent/20';
+        return '#3b82f6';
     }
   };
 
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    // Initialize map
+    const map = L.map(mapContainerRef.current).setView(center, zoom);
+    mapRef.current = map;
+
+    // Add tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+
+    // Add markers
+    reports.forEach((report) => {
+      const marker = L.marker(report.location).addTo(map);
+      
+      const popupContent = `
+        <div style="padding: 8px; min-width: 150px;">
+          <h3 style="font-weight: 600; margin-bottom: 8px;">${report.type}</h3>
+          <div style="display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 500; background-color: ${getStatusColor(report.status)}20; color: ${getStatusColor(report.status)}; border: 1px solid ${getStatusColor(report.status)}40; margin-bottom: 8px;">
+            ${report.status}
+          </div>
+          <p style="font-size: 14px; color: #6b7280; margin-top: 8px;">${report.description}</p>
+        </div>
+      `;
+      
+      marker.bindPopup(popupContent);
+    });
+
+    // Cleanup
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [reports, center, zoom]);
+
   return (
-    <div className="h-full w-full rounded-xl overflow-hidden">
-      <MapContainer
-        center={center}
-        zoom={zoom}
-        style={{ height: '100%', width: '100%', minHeight: '400px' }}
-        className="z-0"
-      >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        {reports.map((report) => (
-          <Marker 
-            key={report.id} 
-            position={report.location}
-          >
-            <Popup>
-              <div className="p-2">
-                <h3 className="font-semibold mb-2">{report.type}</h3>
-                <Badge className={`${getStatusColor(report.status)} mb-2`}>
-                  {report.status}
-                </Badge>
-                <p className="text-sm text-muted-foreground">{report.description}</p>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
-      </MapContainer>
-    </div>
+    <div 
+      ref={mapContainerRef} 
+      className="h-full w-full rounded-xl"
+      style={{ minHeight: '400px' }}
+    />
   );
 };
 
