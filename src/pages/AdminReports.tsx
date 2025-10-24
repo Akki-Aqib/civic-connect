@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -13,72 +13,53 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-const mockAdminReports = [
-  {
-    id: 1,
-    image: '/placeholder.svg',
-    type: 'Pothole',
-    location: 'Main St & Elm Ave',
-    dateSubmitted: '2023-10-26',
-    assignedTo: 'Public Works',
-    status: 'submitted' as const,
-  },
-  {
-    id: 2,
-    image: '/placeholder.svg',
-    type: 'Pothole',
-    location: 'Main St & Elm Ave',
-    dateSubmitted: '2023-09-25',
-    assignedTo: 'Public Works',
-    status: 'resolved' as const,
-  },
-  {
-    id: 3,
-    type: 'Trash Overflow',
-    location: 'Oak Ave & 3rd St',
-    dateSubmitted: '2023-10-27',
-    assignedTo: 'Sanitation',
-    status: 'progress' as const,
-  },
-  {
-    id: 4,
-    type: 'Trash Overflow',
-    location: 'Elm Ave & 2nd St',
-    dateSubmitted: '2023-10-28',
-    assignedTo: 'Sanitation',
-    status: 'progress' as const,
-  },
-  {
-    id: 5,
-    type: 'Broke Bird @ West Rd',
-    location: 'Pine Ave & 4 north St',
-    dateSubmitted: '2023-10-13',
-    assignedTo: 'Unassigned',
-    status: 'submitted' as const,
-  },
-  {
-    id: 6,
-    type: 'Maple Ave Bridge',
-    location: 'Maple Ave between 5th Ave & 6th Ave',
-    dateSubmitted: '2023-10-15',
-    assignedTo: 'Public Works',
-    status: 'progress' as const,
-  },
-  {
-    id: 7,
-    image: '/placeholder.svg',
-    type: 'Pothole',
-    location: 'Broad Ave & Harris Ave',
-    dateSubmitted: '2023-10-18',
-    assignedTo: 'Public Works',
-    status: 'resolved' as const,
-  },
-];
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 const AdminReports = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [reports, setReports] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchReports();
+  }, []);
+
+  const fetchReports = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reports')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      setReports(data || []);
+    } catch (error) {
+      console.error('Error fetching reports:', error);
+      toast.error('Failed to fetch reports');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateStatus = async (reportId: string, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from('reports')
+        .update({ status: newStatus })
+        .eq('id', reportId);
+
+      if (error) throw error;
+
+      toast.success('Status updated successfully');
+      fetchReports();
+    } catch (error) {
+      console.error('Error updating status:', error);
+      toast.error('Failed to update status');
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -98,9 +79,29 @@ const AdminReports = () => {
       case 'progress':
         return 'In Progress';
       default:
-        return 'Submitted';
+        return 'Pending';
     }
   };
+
+  const filteredReports = reports.filter((report) => {
+    const matchesSearch =
+      searchQuery === '' ||
+      report.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      report.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      report.city.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesStatus = statusFilter === 'all' || report.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <p className="text-muted-foreground">Loading reports...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -127,7 +128,7 @@ const AdminReports = () => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="submitted">Submitted</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="progress">In Progress</SelectItem>
                 <SelectItem value="resolved">Resolved</SelectItem>
               </SelectContent>
@@ -141,20 +142,19 @@ const AdminReports = () => {
                   <TableHead className="w-[80px]">Image</TableHead>
                   <TableHead>Issue Type</TableHead>
                   <TableHead>Location</TableHead>
-                  <TableHead>Date Submitted</TableHead>
-                  <TableHead>Assigned To</TableHead>
+                  <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {mockAdminReports.map((report) => (
-                  <TableRow key={report.id} className="hover:bg-muted/30 cursor-pointer">
+                {filteredReports.map((report) => (
+                  <TableRow key={report.id} className="hover:bg-muted/30">
                     <TableCell>
-                      {report.image ? (
+                      {report.image_url ? (
                         <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted">
                           <img
-                            src={report.image}
+                            src={report.image_url}
                             alt={report.type}
                             className="w-full h-full object-cover"
                           />
@@ -165,14 +165,31 @@ const AdminReports = () => {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="font-medium">{report.type}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{report.location}</TableCell>
-                    <TableCell className="text-sm">{report.dateSubmitted}</TableCell>
-                    <TableCell className="text-sm">{report.assignedTo}</TableCell>
+                    <TableCell className="font-medium">
+                      {report.type.charAt(0).toUpperCase() + report.type.slice(1)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {report.city}, {report.state}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {new Date(report.created_at).toLocaleDateString()}
+                    </TableCell>
                     <TableCell>
-                      <Badge className={`status-badge ${getStatusColor(report.status)}`}>
-                        {getStatusLabel(report.status)}
-                      </Badge>
+                      <Select
+                        value={report.status}
+                        onValueChange={(value) => updateStatus(report.id, value)}
+                      >
+                        <SelectTrigger className="w-32">
+                          <Badge className={`status-badge ${getStatusColor(report.status)}`}>
+                            {getStatusLabel(report.status)}
+                          </Badge>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pending">Pending</SelectItem>
+                          <SelectItem value="progress">In Progress</SelectItem>
+                          <SelectItem value="resolved">Resolved</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm">

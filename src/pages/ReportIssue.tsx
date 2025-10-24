@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '@/components/Header';
 import { Button } from '@/components/ui/button';
@@ -6,23 +6,41 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Camera, MapPin, Upload, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Camera, MapPin, Upload, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 
 const issueTypes = [
   { id: 'pothole', label: 'Pothole', icon: '🕳️' },
   { id: 'trash', label: 'Trash Overflow', icon: '🗑️' },
   { id: 'streetlight', label: 'Broken Streetlight', icon: '💡' },
-  { id: 'graffiti', label: 'Graffiti', icon: '🎨' },
+  { id: 'water', label: 'Water Leakage', icon: '💧' },
+  { id: 'road', label: 'Road Damage', icon: '🚧' },
+  { id: 'others', label: 'Others', icon: '📋' },
 ];
 
 const ReportIssue = () => {
   const navigate = useNavigate();
+  const { user, loading } = useAuth();
   const [selectedType, setSelectedType] = useState('');
   const [description, setDescription] = useState('');
-  const [location, setLocation] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [state, setState] = useState('');
+  const [city, setCity] = useState('');
+  const [village, setVillage] = useState('');
+  const [pincode, setPincode] = useState('');
+
+  useEffect(() => {
+    if (!loading && !user) {
+      toast.error('Please login to report an issue');
+      navigate('/auth');
+    }
+  }, [user, loading, navigate]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -36,42 +54,107 @@ const ReportIssue = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!selectedType || !description || !location) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
-    // Mock submission
-    toast.success('Report submitted successfully!', {
-      description: 'We will review your report and take action soon.',
-      icon: <CheckCircle2 className="w-5 h-5 text-success" />,
-    });
-    
-    setTimeout(() => {
-      navigate('/my-reports');
-    }, 1500);
-  };
-
   const getCurrentLocation = () => {
+    setGettingLocation(true);
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setLocation(`${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`);
+          setLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+          setGettingLocation(false);
           toast.success('Location captured successfully');
         },
         () => {
-          toast.error('Unable to get your location');
+          setGettingLocation(false);
+          toast.error('Unable to get your location. Please enable location services.');
         }
       );
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!selectedType || !description || !state || !city || !pincode) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    if (!location) {
+      toast.error('Please capture your location');
+      return;
+    }
+
+    if (!user) {
+      toast.error('Please login to submit a report');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      let imageUrl = null;
+
+      // Upload image if exists
+      if (image) {
+        const fileExt = image.name.split('.').pop();
+        const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('report-images')
+          .upload(fileName, image);
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('report-images')
+          .getPublicUrl(fileName);
+
+        imageUrl = publicUrl;
+      }
+
+      // Insert report
+      const { error: insertError } = await supabase
+        .from('reports')
+        .insert({
+          user_id: user.id,
+          type: selectedType,
+          description: description,
+          state: state,
+          city: city,
+          village: village || null,
+          pincode: pincode,
+          latitude: location.lat,
+          longitude: location.lng,
+          image_url: imageUrl,
+        });
+
+      if (insertError) throw insertError;
+
+      toast.success('Report submitted successfully!', {
+        description: 'We will review your report and take action soon.',
+      });
+      
+      setTimeout(() => {
+        navigate('/my-reports');
+      }, 1500);
+    } catch (error: any) {
+      console.error('Error submitting report:', error);
+      toast.error(error.message || 'Failed to submit report');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="min-h-screen bg-background flex items-center justify-center">Loading...</div>;
+  }
+
   return (
     <div className="min-h-screen bg-background">
-      <Header isLoggedIn={true} />
+      <Header isLoggedIn={!!user} />
       
       <main className="container py-8 max-w-3xl">
         <Button
@@ -91,8 +174,8 @@ const ReportIssue = () => {
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Issue Type */}
               <div className="space-y-3">
-                <Label htmlFor="issue-type">Issue Type *</Label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Label>Issue Type *</Label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {issueTypes.map((type) => (
                     <button
                       key={type.id}
@@ -141,36 +224,6 @@ const ReportIssue = () => {
                       )}
                     </Label>
                   </div>
-                  {imagePreview && (
-                    <div className="h-40 rounded-xl overflow-hidden">
-                      <img
-                        src={imagePreview}
-                        alt="Full preview"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Location */}
-              <div className="space-y-3">
-                <Label htmlFor="location">Location *</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="location"
-                    placeholder="Current Location (GPS)"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={getCurrentLocation}
-                  >
-                    <MapPin className="w-4 h-4" />
-                  </Button>
                 </div>
               </div>
 
@@ -183,7 +236,74 @@ const ReportIssue = () => {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="min-h-32 resize-none"
+                  required
                 />
+              </div>
+
+              {/* Location Details */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="state">State *</Label>
+                  <Input
+                    id="state"
+                    placeholder="e.g., Maharashtra"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="city">City *</Label>
+                  <Input
+                    id="city"
+                    placeholder="e.g., Mumbai"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="village">Village/Area</Label>
+                  <Input
+                    id="village"
+                    placeholder="e.g., Andheri"
+                    value={village}
+                    onChange={(e) => setVillage(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="pincode">Pincode *</Label>
+                  <Input
+                    id="pincode"
+                    placeholder="e.g., 400001"
+                    pattern="[0-9]{6}"
+                    value={pincode}
+                    onChange={(e) => setPincode(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* GPS Location */}
+              <div className="space-y-3">
+                <Label>GPS Location *</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={getCurrentLocation}
+                  disabled={gettingLocation}
+                >
+                  <MapPin className="w-4 h-4 mr-2" />
+                  {gettingLocation
+                    ? 'Getting location...'
+                    : location
+                    ? `Location captured (${location.lat.toFixed(4)}, ${location.lng.toFixed(4)})`
+                    : 'Capture Current Location'}
+                </Button>
               </div>
 
               {/* Submit Button */}
@@ -191,9 +311,10 @@ const ReportIssue = () => {
                 type="submit"
                 size="lg"
                 className="w-full btn-primary shadow-glow text-lg"
+                disabled={isSubmitting}
               >
                 <Upload className="mr-2 w-5 h-5" />
-                Submit Report
+                {isSubmitting ? 'Submitting...' : 'Submit Report'}
               </Button>
             </form>
           </CardContent>

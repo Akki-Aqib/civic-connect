@@ -43,7 +43,7 @@ const MapView = ({ reports, center, zoom = 13 }: MapViewProps) => {
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    // Initialize map
+    // Initialize map centered on India
     const map = L.map(mapContainerRef.current).setView(center, zoom);
     mapRef.current = map;
 
